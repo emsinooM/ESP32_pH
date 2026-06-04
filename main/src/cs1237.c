@@ -51,7 +51,7 @@ void init_system_gpios(void) {
 
   // Cấu hình chân Data của pH là INPUT
   io_conf.pin_bit_mask = (1ULL << PH_DATA_PIN);
-  io_conf.mode = GPIO_MODE_INPUT; // Hoặc GPIO_MODE_INPUT_OUTPUT_OD tùy theo phần cứng của bạn
+  io_conf.mode = GPIO_MODE_INPUT;
   io_conf.pull_up_en = 1;
   io_conf.pull_down_en = 0;
   gpio_config(&io_conf);
