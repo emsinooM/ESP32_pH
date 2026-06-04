@@ -28,7 +28,7 @@ void update_ph_calibration(PhCalibration_t *cal, float v7, float t7_c, float v4,
 }
 
 float calculate_temperature(int32_t raw_adc, bool is_pt1000) {
-    float v_diff = ((float)raw_adc * V_REF) / ADC_DIVISOR;
+    float v_diff = ((float)raw_adc * V_REF_ADC) / ADC_DIVISOR;
 
     // Phòng ngừa lỗi chia cho 0 hoặc giá trị quá nhỏ
     if (fabsf(v_diff) < 1e-6f) {
@@ -36,15 +36,15 @@ float calculate_temperature(int32_t raw_adc, bool is_pt1000) {
     }
 
     if (is_pt1000) {
-        float ratio = V_REF / v_diff;
+        float ratio = V_REF_BRIDGE  / v_diff;
         if (ratio < 1.0f) ratio = 1.0f; // Tránh điện trở âm bất thường
-        float r_pt1000 = 750.0f * (ratio - 1.0f);
+        float r_pt1000 = R_CALIB * (ratio - 1.0f);
         return (r_pt1000 - 1000.0f) / 3.9083f;
     } else {
-        float v_ntc = V_REF + v_diff;
+        float v_ntc = V_REF_BRIDGE  + v_diff;
         if (v_ntc <= 0.0f) v_ntc = 1e-6f;
         
-        float ratio = V_REF / v_ntc;
+        float ratio = V_REF_BRIDGE  / v_ntc;
         if (ratio <= 1.0001f) ratio = 1.0001f; // Tránh lấy log của số âm hoặc bằng 0
         
         float r_ntc = 750.0f / (ratio - 1.0f);
@@ -59,8 +59,8 @@ float calculate_temperature(int32_t raw_adc, bool is_pt1000) {
 }
 
 float calculate_ph_with_atc_calibrated(PhCalibration_t *cal, int32_t raw_adc, float temp_c, float *out_v_probe_mv) {
-    float v_diff = ((float)raw_adc * V_REF) / ((float)ADC_SCALE * PGA);
-    float v_probe = 2.0f * v_diff - 0.83333f; 
+    float v_diff = ((float)raw_adc * V_REF_ADC) / ADC_DIVISOR;
+    float v_probe =  v_diff - 0.83333f; 
     float v_probe_mv = v_probe * 1000.0f;
     
     if (out_v_probe_mv) {
@@ -72,7 +72,12 @@ float calculate_ph_with_atc_calibrated(PhCalibration_t *cal, int32_t raw_adc, fl
 
     // Nếu hệ thống chưa được hiệu chuẩn thực tế: Fallback về công thức tuyến tính lý thuyết
     if (!cal->is_calibrated) {
-        float slope_at_temp = -59.16f * ((temp_c + 273.15f) / 298.15f);
+        float slope_at_25 = -59.16f; // Mặc định lý thuyết ở 25C (298.15K)
+        // Nếu đã có dữ liệu cấu hình hiệu chuẩn (V4 và V7 khác nhau)
+        if (fabsf(cal->ph4_voltage_mv - cal->ph7_voltage_mv) > 1.0f) {
+            slope_at_25 = (cal->ph4_voltage_mv - cal->ph7_voltage_mv) / (4.01f - 7.00f);
+        }
+        float slope_at_temp = slope_at_25 * ((temp_c + 273.15f) / 298.15f);
         return 7.00f + (v_probe_mv / slope_at_temp);
     }
 

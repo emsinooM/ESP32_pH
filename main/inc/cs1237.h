@@ -23,4 +23,6 @@ void write_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin,
 // Đọc giá trị ADC thô từ CS1237
 int32_t read_cs1237_raw(gpio_num_t sclk_pin, gpio_num_t data_pin);
 
+uint8_t read_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin);
+
 #endif // CS1237_H

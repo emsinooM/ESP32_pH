@@ -130,7 +130,7 @@ static uint8_t fb[LCD_PAGES][LCD_WIDTH] __attribute__((aligned(4))); /* fb[page]
 
 static spi_device_handle_t s_spi;
 
-uint8_t g_lcd_contrast = 25;
+uint8_t g_lcd_contrast = 15;
 volatile bool g_lcd_need_redraw = true;
 static volatile float s_real_ph = 7.00f;
 static volatile float s_real_temp = 25.0f;
@@ -239,7 +239,7 @@ lcd_err_t LCD_Init(void)
     lcd_cmd(0x00); /* 4x Booster */
     
     /* Thiết lập điện áp tỷ số điện trở nội */
-    lcd_cmd(0x25); /* Resistor Ratio (v0 voltage resistor ratio, 0x20 - 0x27) */
+    lcd_cmd(0x23); /* Resistor Ratio (v0 voltage resistor ratio, 0x20 - 0x27) */
     
     /* Thiết lập tương phản (Contrast) */
     lcd_cmd(0x81); /* Electronic Volume (Contrast command) */

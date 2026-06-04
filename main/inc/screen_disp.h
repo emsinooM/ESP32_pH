@@ -46,7 +46,7 @@
  * Cấu hình SPI
  * ===================================================================== */
 #define LCD_SPI_HOST        SPI2_HOST           /**< SPI2_HOST (FSPI) bus mặc định của ESP32-S3 */
-#define LCD_SPI_FREQ_HZ     (100 * 1000)   /**< Tốc độ: 100 kHz để đảm bảo truyền tín hiệu tốt trên dây nối dài */
+#define LCD_SPI_FREQ_HZ     (2000 * 1000)   /**< Tốc độ: 100 kHz để đảm bảo truyền tín hiệu tốt trên dây nối dài */
 #define LCD_SPI_MODE        0                   /**< CPOL=0, CPHA=0 (Mode 0) cho ST7565R */
 
 /* =====================================================================

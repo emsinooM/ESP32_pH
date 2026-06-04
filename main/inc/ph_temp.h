@@ -5,14 +5,19 @@
 #include <stdint.h>
 
 // Hằng số dùng chung cho tính toán pH & Nhiệt độ
-#define V_REF           1.25f
+// Định nghĩa lại 2 mốc điện áp riêng biệt
+#define V_REF_ADC       3.30f  // <-- THAY BẰNG ÁP VDD BẠN ĐO ĐƯỢC TẠI CHÂN 7
+#define V_REF_BRIDGE    1.25f  // ÁP cấp cho cầu phân áp PT1000
+// #define V_REF           1.25f
 #define PGA             1.0f
-#define ADC_SCALE       (1 << 23)   // 8388608
-#define ADC_DIVISOR     (ADC_SCALE * PGA)  
+#define ADC_SCALE       8388607.0f
+#define ADC_DIVISOR     (ADC_SCALE * 2.0f * PGA)  
 
 #define NTC_T0_KELVIN               (25.0f + 273.15f)
 #define NTC_NOMINAL_RESISTANCE      10000.0f
 #define NTC_BETA                    3950.0f
+
+#define R_CALIB 877.0f
 
 // --- Cấu trúc dữ liệu Hiệu chuẩn pH 2 điểm nâng cao ---
 typedef struct {
@@ -34,4 +39,4 @@ float calculate_temperature(int32_t raw_adc, bool is_pt1000);
 // Tính toán pH bù nhiệt (ATC) kết hợp dữ liệu hiệu chuẩn thực tế 2 điểm
 float calculate_ph_with_atc_calibrated(PhCalibration_t *cal, int32_t raw_adc, float temp_c, float *out_v_probe_mv);
 
-#endif // PH_TEMP_H
+#endif // PH_TEMP_H;
