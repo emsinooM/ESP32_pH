@@ -14,11 +14,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
+#include <sys/time.h>
+
 
 static const char *TAG = "GMG12864";
 
@@ -130,7 +134,7 @@ static uint8_t fb[LCD_PAGES][LCD_WIDTH] __attribute__((aligned(4))); /* fb[page]
 
 static spi_device_handle_t s_spi;
 
-uint8_t g_lcd_contrast = 15;
+uint8_t g_lcd_contrast = 5;
 volatile bool g_lcd_need_redraw = true;
 static volatile float s_real_ph = 7.00f;
 static volatile float s_real_temp = 25.0f;
@@ -144,17 +148,34 @@ static void lcd_send(const uint8_t *data, int len, bool is_data)
     gpio_set_level(LCD_PIN_DC, is_data ? 1 : 0);
     gpio_set_level(LCD_PIN_CS, 0); // Kéo CS xuống LOW để chọn thiết bị
     
-    spi_transaction_t t = {0};
-    if (len <= 4) {
-        t.flags = SPI_TRANS_USE_TXDATA; // Truyền trực tiếp dữ liệu tĩnh, bỏ qua DMA
-        t.length = len * 8;
-        memcpy(t.tx_data, data, len);
-    } else {
-        t.length = len * 8;
-        t.tx_buffer = data;
-    }
+    esp_rom_delay_us(50); 
     
+    /*
+     * Luôn dùng SPI_TRANS_USE_TXDATA (tối đa 4 byte/lần) để bỏ qua DMA.
+     * DMA trên ESP32-S3 gặp lỗi cache coherency khi truyền buffer lớn,
+     * gây ra hiện tượng sọc dọc trên màn hình LCD.
+     * Gửi 4 byte/lần qua SPI FIFO trực tiếp: chậm hơn nhưng 100% chính xác.
+     */
+    // while (len > 0) {
+    //     spi_transaction_t t = {0};
+    //     int chunk = (len >= 4) ? 4 : len;
+    //     t.flags = SPI_TRANS_USE_TXDATA;
+    //     t.length = chunk * 8;
+    //     memcpy(t.tx_data, data, chunk);
+    //     ESP_ERROR_CHECK(spi_device_polling_transmit(s_spi, &t));
+    //     data += chunk;
+    //     len -= chunk;
+    // }
+    // Cấu hình transaction truyền trực tiếp từ mảng (Bỏ hoàn toàn vòng lặp while chunk 4 byte)
+    spi_transaction_t t = {
+        .flags     = 0,            /* Không dùng cờ TXDATA để tránh lỗi đảo byte */
+        .length    = len * 8,      /* Độ dài tính bằng số bit */
+        .tx_buffer = data,         /* Truyền trực tiếp từ con trỏ mảng */
+        .rx_buffer = NULL
+    };
+    // Gửi toàn bộ gói tin (3 byte lệnh hoặc 132 byte dữ liệu) trong 1 lần duy nhất
     ESP_ERROR_CHECK(spi_device_polling_transmit(s_spi, &t));
+    
     gpio_set_level(LCD_PIN_CS, 1); // Kéo CS lên HIGH sau khi truyền xong
 }
 
@@ -166,6 +187,22 @@ static inline void lcd_cmd(uint8_t cmd)
 static inline void lcd_dat(uint8_t dat)
 {
     lcd_send(&dat, 1, true);
+}
+
+void LCD_Clear_DDRAM(void)
+{
+    static uint8_t zero_buf[132] __attribute__((aligned(4)));
+    memset(zero_buf, 0x00, sizeof(zero_buf));
+    for (uint8_t page = 0; page < LCD_PAGES; page++) {
+        /* Gộp 3 lệnh chọn Page và Cột thành 1 mảng để gửi đồng thời */
+        uint8_t cmds[3] = {
+            0xB0 | page, /* Set page address */
+            0x10,        /* Set column address high nibble to 0 */
+            0x00         /* Set column address low nibble to 0 */
+        };
+        lcd_send(cmds, 3, false); // Gửi lệnh định vị
+        lcd_send(zero_buf, 132, true); // Gửi dữ liệu xóa
+    }
 }
 
 /* =====================================================================
@@ -193,7 +230,7 @@ lcd_err_t LCD_Init(void)
         .sclk_io_num   = LCD_PIN_CLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_WIDTH * LCD_PAGES + 8,
+        .max_transfer_sz = 132 * LCD_PAGES + 8,
     };
     esp_err_t ret = spi_bus_initialize(LCD_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO); // Kích hoạt lại DMA cho các gói tin lớn (như Flush màn hình)
     if (ret != ESP_OK) {
@@ -215,11 +252,11 @@ lcd_err_t LCD_Init(void)
     }
 
     /* --- Reset phần cứng (đã đấu nối cứng bên ngoài mạch) --- */
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     /* --- Chuỗi lệnh khởi tạo ST7565R (Đồng bộ U8g2 NHD-C12864) --- */
     lcd_cmd(0xE2); /* Software Reset */
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(200));
     
     lcd_cmd(0xAE); /* Display OFF */
     lcd_cmd(0x40); /* Set Display Start Line = 0 */
@@ -229,28 +266,50 @@ lcd_err_t LCD_Init(void)
     
     lcd_cmd(0xA6); /* Normal Display */
     lcd_cmd(0xA2); /* LCD Bias: 1/9 bias */
-    
-    /* Bật toàn bộ các mạch nguồn (Booster + Regulator + Follower) */
-    lcd_cmd(0x2F); 
-    vTaskDelay(pdMS_TO_TICKS(50));
-    
-    /* Thiết lập tỷ số nhân áp (Booster Ratio Select) */
-    lcd_cmd(0xF8); /* Booster Ratio Command */
-    lcd_cmd(0x00); /* 4x Booster */
-    
+
     /* Thiết lập điện áp tỷ số điện trở nội */
-    lcd_cmd(0x23); /* Resistor Ratio (v0 voltage resistor ratio, 0x20 - 0x27) */
-    
+    lcd_cmd(0x20); /* Resistor Ratio (v0 voltage resistor ratio, 0x20 - 0x27) */
+
     /* Thiết lập tương phản (Contrast) */
     lcd_cmd(0x81); /* Electronic Volume (Contrast command) */
     lcd_cmd(g_lcd_contrast);   /* Sử dụng biến tương phản toàn cục */
     
+    /* Bật toàn bộ các mạch nguồn (Booster + Regulator + Follower) */
+    // lcd_cmd(0x2F);
+    lcd_cmd(0x2C);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    lcd_cmd(0x2E);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    lcd_cmd(0x2F);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    
+    // /* Thiết lập tỷ số nhân áp (Booster Ratio Select) */
+    // lcd_cmd(0xF8); /* Booster Ratio Command */
+    // lcd_cmd(0x00); /* 4x Booster */
+    
     lcd_cmd(0xA4); /* Gửi lệnh hiển thị bình thường từ bộ đệm RAM */
+    
+    /* --- Xóa sạch toàn bộ bộ nhớ DDRAM 132 cột của ST7565R --- */
+    LCD_Clear_DDRAM();
+    
     lcd_cmd(0xAF); /* Display ON */
 
-    /* --- Xóa màn hình --- */
+    /* --- Xóa framebuffer và flush --- */
     LCD_Clear();
     LCD_Flush();
+
+    /* ── BÀI TEST CHẨN ĐOÁN SPI ──
+     * Tô đen toàn bộ màn hình 3 giây để kiểm tra SPI hoạt động đúng.
+     * Nếu màn hình đen hoàn toàn (không sọc) → SPI OK.
+     * Nếu vẫn sọc → SPI bị lỗi hoặc DMA có vấn đề.
+     * Sau khi xác nhận xong, có thể comment đoạn này lại.
+     */
+    // memset(fb, 0xFF, sizeof(fb));   /* Điền toàn bộ framebuffer = pixel ON (đen) */
+    // LCD_Flush();
+    // ESP_LOGI(TAG, "=== SPI DIAGNOSTIC: Man hinh phai den HOAN TOAN trong 3 giay ===");
+    // vTaskDelay(pdMS_TO_TICKS(3000));
+    // LCD_Clear();                    /* Xóa trắng lại */
+    // LCD_Flush();
 
     ESP_LOGI(TAG, "ST7565R san sang!");
     return LCD_OK;
@@ -279,12 +338,32 @@ void LCD_Clear(void)
 
 void LCD_Flush(void)
 {
+    /*
+     * ST7565R có 132 cột DDRAM nhưng màn hình chỉ hiển thị 128 cột.
+     * LCD_COLUMN_OFFSET = 4 → pixel hiển thị bắt đầu từ cột DDRAM thứ 4.
+     * Để triệt để loại bỏ rác DDRAM (sọc dọc), ta ghi đè toàn bộ 132 cột:
+     *   - Cột 0..3   : padding 0x00 (vùng ẩn trước offset)
+     *   - Cột 4..131 : dữ liệu framebuffer (128 byte)
+     *
+     * Buffer phải static + aligned(4) để đảm bảo tương thích GDMA trên ESP32-S3.
+     */
+    static uint8_t row_buf[132] __attribute__((aligned(4)));
+
     for (uint8_t page = 0; page < LCD_PAGES; page++) {
-        lcd_cmd(0xB0 | page);    /* Set page address          */
-        uint8_t col = LCD_COLUMN_OFFSET;
-        lcd_cmd(0x10 | (col >> 4));   /* Set column high nibble */
-        lcd_cmd(0x00 | (col & 0x0F)); /* Set column low  nibble  */
-        lcd_send(fb[page], LCD_WIDTH, true);
+        /* Gộp 3 lệnh chọn Page và Cột thành 1 mảng để gửi đồng thời */
+        uint8_t cmds[3] = {
+            0xB0 | page, /* Set page address */
+            0x10,        /* Set column address high nibble to 0 */
+            0x00         /* Set column address low nibble to 0 */
+        };        
+        /* Gửi 3 lệnh định vị trong 1 transaction */
+        lcd_send(cmds, 3, false);
+        /* Điền zero cho vùng offset đầu */
+        memset(row_buf, 0x00, LCD_COLUMN_OFFSET);
+        /* Copy framebuffer vào sau vùng offset */
+        memcpy(row_buf + LCD_COLUMN_OFFSET, fb[page], LCD_WIDTH);
+        /* Gửi toàn bộ 132 byte trong 1 transaction SPI */
+        lcd_send(row_buf, 132, true);
     }
 }
 
@@ -488,12 +567,12 @@ static void lcd_demo_task(void *arg)
     float   temp_val  = 25.3f;
     int     ph_dir    = 1;
     int     temp_dir  = 1;
-    int     sec_cnt   = 0;         /* giây đồng hồ giả lập          */
     int     tick      = 0;         /* 0..19  → 20×50 ms = 1 giây    */
 
     char    ph_str[10]   = "7.00";
     char    temp_str[12] = "25.3 C";
-    char    time_str[32] = "10:57 AM";
+    char    time_str[32] = "--:-- --";
+    char    date_str[32] = "2026-05-22";
 
     while (1) {
         /* ── 1. Xử lý nút bấm ── */
@@ -512,16 +591,6 @@ static void lcd_demo_task(void *arg)
 
         /* Cập nhật giá trị mỗi 1 giây (tick=0) */
         if (tick == 0) {
-            // /* Drift pH */
-            // ph_val += ph_dir * 0.01f;
-            // if (ph_val > 7.15f) ph_dir = -1;
-            // if (ph_val < 6.85f) ph_dir =  1;
-
-            // /* Drift nhiệt độ */
-            // temp_val += temp_dir * 0.1f;
-            // if (temp_val > 26.2f) temp_dir = -1;
-            // if (temp_val < 24.8f) temp_dir =  1;
-
             ph_val = s_real_ph;
             temp_val = s_real_temp;
 
@@ -529,11 +598,26 @@ static void lcd_demo_task(void *arg)
             snprintf(ph_str,   sizeof(ph_str),   "%.2f",      ph_val);
             snprintf(temp_str, sizeof(temp_str), "%.1f C",    temp_val);
 
-            int hours   = 10;
-            int minutes = 57 + (sec_cnt / 60);
-            if (minutes >= 60) { hours += minutes / 60; minutes %= 60; }
-            snprintf(time_str, sizeof(time_str), "%02d:%02d AM", hours, minutes);
-            sec_cnt++;
+            // Đọc thời gian thực tế từ hệ thống
+            time_t now;
+            struct tm timeInfo;
+            time(&now);
+            localtime_r(&now, &timeInfo);
+
+            // Nếu thời gian đã được đồng bộ (năm lớn hơn hoặc bằng 2000, tương ứng tm_year >= 100)
+            if (timeInfo.tm_year >= 100) {
+                strftime(time_str, sizeof(time_str), "%I:%M %p", &timeInfo);
+                strftime(date_str, sizeof(date_str), "%Y-%m-%d", &timeInfo);
+            } else {
+                snprintf(time_str, sizeof(time_str), "--:-- --");
+                snprintf(date_str, sizeof(date_str), "2026-05-22");
+            }
+
+            static uint8_t log_cnt = 0;
+            if (++log_cnt >= 5) { // tick == 0 xảy ra mỗi 2 giây, do đó 5 lần là 10 giây
+                log_cnt = 0;
+                ESP_LOGI(TAG, "Thoi gian hien thi tren LCD: %s %s", date_str, time_str);
+            }
 
             g_lcd_need_redraw = true;
         }
@@ -577,14 +661,14 @@ static void lcd_demo_task(void *arg)
             LCD_DrawPixel(114, 45, LCD_COLOR_OFF);
             LCD_DrawPixel(113, 46, LCD_COLOR_OFF);
             LCD_DrawPixel(114, 46, LCD_COLOR_OFF);
-            LCD_DrawString(4,  54, "2026-05-22", LCD_COLOR_OFF);
-            LCD_DrawString(76, 54, time_str,     LCD_COLOR_OFF);
+            LCD_DrawString(4,  54, date_str,        LCD_COLOR_OFF);
+            LCD_DrawString(76, 54, time_str,        LCD_COLOR_OFF);
 
             LCD_Flush();
             g_lcd_need_redraw = false;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 

@@ -12,7 +12,8 @@ static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 static inline void delay_us(uint32_t us) { esp_rom_delay_us(us); }
 
 void init_system_gpios(void) {
-  // Reset only the temperature pins to disconnect from USB Serial JTAG or other functions
+  // Reset only the temperature pins to disconnect from USB Serial JTAG or other
+  // functions
   gpio_reset_pin(TEMP_SCLK_PIN);
   gpio_reset_pin(TEMP_DATA_PIN);
 
@@ -37,7 +38,7 @@ void init_system_gpios(void) {
   // Thả nổi chân DATA ban đầu ở mức HIGH (High-Z)
   gpio_set_level(TEMP_DATA_PIN, 1);
 
-    // --- Khởi tạo các chân GPIO cho pH ---
+  // --- Khởi tạo các chân GPIO cho pH ---
   gpio_reset_pin(PH_SCLK_PIN);
   gpio_reset_pin(PH_DATA_PIN);
 
@@ -56,36 +57,32 @@ void init_system_gpios(void) {
   io_conf.pull_down_en = 0;
   gpio_config(&io_conf);
   gpio_set_level(PH_DATA_PIN, 1);
-
 }
 
 void write_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin,
-                         uint8_t config_val) {
+uint8_t config_val) {
   // gpio_set_level(data_pin, 1);
   int timeout = 10000;
   while (gpio_get_level(data_pin) == 1) {
-    delay_us(10);
+    delay_us(50);
     if (--timeout <= 0) {
       ESP_LOGE(TAG, "Timeout chờ DRDY khi cấu hình!");
       return;
     }
   }
-
   portENTER_CRITICAL(&mux);
-
   gpio_set_direction(data_pin, GPIO_MODE_OUTPUT);
 
-  // Gửi 27 xung đầu tiên để đọc/bỏ qua dữ liệu cũ
+  // 1. Gửi 27 xung đầu tiên để đọc/bỏ qua dữ liệu cũ
   for (int i = 0; i < 27; i++) {
     gpio_set_level(sclk_pin, 1);
-    delay_us(10);
+    delay_us(50);
     gpio_set_level(sclk_pin, 0);
-    delay_us(10);
+    delay_us(50);
   }
 
-  // 2. Gửi 2 xung dummy (xung 28, 29) và kéo DATA lên HIGH báo hiệu bắt đầu
-  // lệnh ghi
-  delay_us(10);
+  // Gửi 2 xung dummy (xung 28, 29)
+  delay_us(50);
   for (int i = 0; i < 2; i++) {
     gpio_set_level(sclk_pin, 1);
     delay_us(50);
@@ -105,8 +102,7 @@ void write_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin,
   }
 
   // 4. Xung 37 (1 xung Turnaround): Chân DOUT của CS1237 tiếp tục giữ nguyên là
-  // INPUT (đối với chip) MCU giữ nguyên cấu hình OUTPUT và chỉ phát 1 xung
-  // nhịp, không cần ép mức LOW nhân tạo
+  // INPUT (đối với chip) MCU giữ nguyên cấu hình OUTPUT và chỉ phát 1 xung nhịp
   gpio_set_level(sclk_pin, 1);
   delay_us(50);
   gpio_set_level(sclk_pin, 0);
@@ -128,8 +124,7 @@ void write_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin,
   gpio_set_level(sclk_pin, 0);
   delay_us(50);
 
-  // Trả lại chân DATA làm INPUT để tiếp tục đọc dữ liệu
-  // gpio_set_level(data_pin, 1);
+  // Trả lại chân DATA làm INPUT để tiếp tục đọc dữ liệu thông thường
   gpio_set_direction(data_pin, GPIO_MODE_INPUT);
 
   portEXIT_CRITICAL(&mux);
@@ -190,67 +185,78 @@ int32_t read_cs1237_raw(gpio_num_t sclk_pin, gpio_num_t data_pin) {
 }
 
 uint8_t read_cs1237_config(gpio_num_t sclk_pin, gpio_num_t data_pin) {
-    uint8_t config_read = 0;
-    int timeout = 10000;
+  uint8_t config_read = 0;
+  int timeout = 10000;
 
-    // Chờ chip sẵn sàng
-    gpio_set_level(data_pin, 1);
-    while (gpio_get_level(data_pin) == 1) {
-        delay_us(10);
-        if (--timeout <= 0) return 0xFF; // Lỗi timeout
+  // Chờ chip sẵn sàng
+  gpio_set_level(data_pin, 1);
+  while (gpio_get_level(data_pin) == 1) {
+    delay_us(50);
+    if (--timeout <= 0)
+      return 0xFF; // Lỗi timeout
+  }
+
+  portENTER_CRITICAL(&mux);
+
+  // 1. Xung 1-27: Đọc bỏ qua dữ liệu ADC cũ
+  for (int i = 0; i < 27; i++) {
+    gpio_set_level(sclk_pin, 1);
+    delay_us(40);
+    gpio_set_level(sclk_pin, 0);
+    delay_us(40);
+  }
+
+  // 2. Xung 28-29 (Turnaround)
+  delay_us(10);
+  for (int i = 0; i < 2; i++) {
+    gpio_set_level(sclk_pin, 1);
+    delay_us(40);
+    gpio_set_level(sclk_pin, 0);
+    delay_us(40);
+  }
+
+  // 3. Xung 30-36: Gửi lệnh ĐỌC thanh ghi (0x56)
+  // Cấu hình chân DATA thành OUTPUT để truyền lệnh ghi cho CS1237
+  gpio_set_direction(data_pin, GPIO_MODE_OUTPUT);
+
+  uint8_t cmd = 0x56; // Mã lệnh Đọc
+  for (int i = 0; i < 7; i++) {
+    gpio_set_level(data_pin, (cmd >> (6 - i)) & 0x01);
+    delay_us(40);
+    gpio_set_level(sclk_pin, 1);
+    delay_us(40);
+    gpio_set_level(sclk_pin, 0);
+    delay_us(40);
+  }
+
+  // 4. Xung 37 (Turnaround Đọc):
+  // MCU PHẢI chuyển chân DATA lại thành INPUT để nhận dữ liệu do CS1237 phản hồi
+  gpio_set_direction(data_pin, GPIO_MODE_INPUT);
+
+  gpio_set_level(sclk_pin, 1);
+  delay_us(40);
+  gpio_set_level(sclk_pin, 0);
+  delay_us(40);
+
+  // 5. Xung 38-45: Đọc 8-bit dữ liệu cấu hình từ chip (MSB xuất ra trước)
+  for (int i = 0; i < 8; i++) {
+    gpio_set_level(sclk_pin, 1);
+    delay_us(40);
+    gpio_set_level(sclk_pin, 0);
+    delay_us(40);
+    // Đọc mức logic do CS1237 đẩy ra
+    if (gpio_get_level(data_pin)) {
+      config_read |= (1 << (7 - i));
     }
+  }
 
-    portENTER_CRITICAL(&mux);
+  // 6. Xung 46: Kết thúc
+  gpio_set_level(sclk_pin, 1);
+  delay_us(40);
+  gpio_set_level(sclk_pin, 0);
+  delay_us(40);
 
-    // 1. Xung 1-27: Đọc bỏ qua dữ liệu ADC cũ
-    for (int i = 0; i < 27; i++) {
-        gpio_set_level(sclk_pin, 1); delay_us(10);
-        gpio_set_level(sclk_pin, 0); delay_us(10);
-    }
+  portEXIT_CRITICAL(&mux);
 
-    // 2. Xung 28-29 (Turnaround)
-    delay_us(10);
-    for (int i = 0; i < 2; i++) {
-        gpio_set_level(sclk_pin, 1); delay_us(50);
-        gpio_set_level(sclk_pin, 0); delay_us(50);
-    }
-
-    // 3. Xung 30-36: Gửi lệnh ĐỌC thanh ghi (0x56)
-    // Cấu hình chân DATA thành OUTPUT để truyền lệnh ghi cho CS1237
-    gpio_set_direction(data_pin, GPIO_MODE_OUTPUT);
-
-    uint8_t cmd = 0x56; // Mã lệnh Đọc (0x56 hoặc 0x56)
-    for (int i = 0; i < 7; i++) {
-        gpio_set_level(data_pin, (cmd >> (6 - i)) & 0x01);
-        delay_us(50);
-        gpio_set_level(sclk_pin, 1);
-        delay_us(50);
-        gpio_set_level(sclk_pin, 0);
-        delay_us(50);
-    }
-
-    // 4. Xung 37 (Turnaround Đọc): 
-    // MCU PHẢI chuyển chân DATA lại thành INPUT để nhận dữ liệu do CS1237 phản hồi
-    gpio_set_direction(data_pin, GPIO_MODE_INPUT);
-    
-    gpio_set_level(sclk_pin, 1); delay_us(50);
-    gpio_set_level(sclk_pin, 0); delay_us(50);
-
-    // 5. Xung 38-45: Đọc 8-bit dữ liệu cấu hình từ chip (MSB xuất ra trước)
-    for (int i = 0; i < 8; i++) {
-        gpio_set_level(sclk_pin, 1); delay_us(50);
-        gpio_set_level(sclk_pin, 0); delay_us(50);
-        // Đọc mức logic do CS1237 đẩy ra
-        if (gpio_get_level(data_pin)) {
-            config_read |= (1 << (7 - i));
-        }
-    }
-
-    // 6. Xung 46: Kết thúc
-    gpio_set_level(sclk_pin, 1); delay_us(50);
-    gpio_set_level(sclk_pin, 0); delay_us(50);
-
-    portEXIT_CRITICAL(&mux);
-
-    return config_read;
+  return config_read;
 }
