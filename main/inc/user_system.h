@@ -34,7 +34,7 @@
 #define CMD_CODE_SET_DEVICE_CONFIG          505
 
 
-#define VERSION "3.0.4"
+#define VERSION "1.0.2"
 
 
 /* Define Telemetry queue length */

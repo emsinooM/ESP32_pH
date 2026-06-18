@@ -20,18 +20,42 @@
 
 #define R_CALIB 725.0f
 
-// --- Cấu trúc dữ liệu Hiệu chuẩn pH 2 điểm nâng cao ---
+// --- Cấu trúc dữ liệu Hiệu chuẩn pH 2 điểm và 3 điểm nâng cao ---
 typedef struct {
-    float ph7_voltage_mv;   // Hiệu điện thế thực tế đo được tại pH 7.00 (mV)
-    float ph7_temp_c;       // Nhiệt độ dung dịch đo lúc hiệu chuẩn pH 7 (C)
-    float ph4_voltage_mv;   // Hiệu điện thế thực tế đo được tại pH 4.01 (mV)
+    float ph7_voltage_mv;   // Hiệu điện thế thực tế đo được tại pH 7.00 hoặc 6.86 (mV)
+    float ph7_temp_c;       // Nhiệt độ dung dịch đo lúc hiệu chuẩn pH 7/6.86 (C)
+    float ph4_voltage_mv;   // Hiệu điện thế thực tế đo được tại pH 4.00 (mV)
     float ph4_temp_c;       // Nhiệt độ dung dịch đo lúc hiệu chuẩn pH 4 (C)
-    float slope_norm;       // Độ dốc chuẩn hóa thực tế (pH * K / mV)
-    float u7;               // Điểm lệch chuẩn hóa thực tế tại pH 7.00 (mV/K)
+    float ph10_voltage_mv;  // Hiệu điện thế thực tế đo được tại pH 9.18 hoặc 10.00 (mV)
+    float ph10_temp_c;      // Nhiệt độ dung dịch đo lúc hiệu chuẩn pH 9.18/10.00 (C)
+    float ph10_target;      // Giá trị pH mục tiêu kiềm (9.18 hoặc 10.00)
+    
+    float slope_norm;       // Độ dốc chuẩn hóa axit (pH * K / mV) (cho pH <= 7.00)
+    float slope_high;       // Độ dốc chuẩn hóa kiềm (pH * K / mV) (cho pH > 7.00)
+    float u7;               // Điểm lệch chuẩn hóa thực tế tại pH 7.00/6.86 (mV/K)
+    
+    uint8_t cal_type;       // 2 = Hiệu chuẩn 2 điểm, 3 = Hiệu chuẩn 3 điểm
     bool is_calibrated;     // Trạng thái xác định hệ thống đã được hiệu chuẩn thành công hay chưa
 } PhCalibration_t;
 
 extern PhCalibration_t ph_cal;
+
+// --- Cấu trúc cấu hình Nhiệt độ ---
+typedef enum {
+    TEMP_MODE_ATC_C = 0, // Bù nhiệt tự động, đơn vị °C
+    TEMP_MODE_MTC_C,     // Bù nhiệt thủ công, đơn vị °C
+    TEMP_MODE_ATC_F,     // Bù nhiệt tự động, đơn vị °F
+    TEMP_MODE_MTC_F,     // Bù nhiệt thủ công, đơn vị °F
+    TEMP_MODE_COUNT
+} temp_mode_t;
+
+extern temp_mode_t g_temp_mode;
+extern float g_manual_temp;
+extern float g_temp_alpha;
+extern float g_temp_offset;
+
+bool Load_Temp_Settings_From_Storage(void);
+bool Save_Temp_Settings_To_Storage(void);
 
 // --- Cấu trúc trạng thái toàn cục của Cảm biến ---
 typedef struct {
@@ -47,11 +71,17 @@ typedef struct {
     float ph4_temp_c;
     float slope_norm;
     float u7;
+
+    // Cảm biến DO (Dissolved Oxygen)
+    float do_mg_l;          // Nồng độ DO (mg/L)
+    float do_temp_c;        // Nhiệt độ cảm biến DO (C)
+    float do_saturation_pct;// Độ bão hòa DO (%)
+    bool do_valid;          // Trạng thái dữ liệu hợp lệ
+    int do_error_code;      // Mã lỗi nếu do_valid = false
 } PH_Temp_Sensor_Status_t;
 
 // Hàm cập nhật tham số hiệu chuẩn từ phép đo thực tế (Gọi khi nhúng dung dịch chuẩn thành công)
-void update_ph_calibration(PhCalibration_t *cal, float v7, float t7_c, float v4, float t4_c);
-
+void update_ph_calibration(PhCalibration_t *cal);
 // Tính toán nhiệt độ từ ADC thô (PT1000 hoặc NTC)
 float calculate_temperature(int32_t raw_adc, bool is_pt1000);
 
@@ -61,9 +91,9 @@ float calculate_ph_with_atc_calibrated(PhCalibration_t *cal, int32_t raw_adc, fl
 // --- Các API Toàn cục mới phục vụ Web Server & Azure ---
 PH_Temp_Sensor_Status_t Get_Sensor_Status(void);
 void Update_Sensor_Measurements(float ph, float temp, float v_probe_mv);
+void Update_DO_Sensor_Measurements(float do_mg_l, float do_temp_c, float do_saturation_pct, bool do_valid, int do_error_code);
 bool Load_Calibration_From_Storage(void);
 bool Save_Calibration_To_Storage(const PhCalibration_t *cal);
-bool Calibrate_PH_7(float current_v_mv, float current_temp_c);
-bool Calibrate_PH_4(float current_v_mv, float current_temp_c);
+bool Calibrate_PH_Point(float target_ph, float current_v_mv, float current_temp_c, uint8_t cal_type);
 
 #endif // PH_TEMP_H

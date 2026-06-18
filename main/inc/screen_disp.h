@@ -98,6 +98,13 @@ void LCD_DisplayOff(void);
  */
 void LCD_SetContrast(uint8_t val);
 
+/**
+ * @brief  Thiet lap ty so dien tro noi
+ * @param  val  Gia tri 0 - 7
+ */
+void LCD_SetResistorRatio(uint8_t val);
+
+
 /* =====================================================================
  * API – Framebuffer
  * ===================================================================== */
@@ -246,9 +253,15 @@ void LCD_DrawBitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h, const uint8_t *b
 void LCD_Start_Task(void);
 
 extern uint8_t g_lcd_contrast;
+extern uint8_t g_lcd_resistor_ratio;
 extern volatile bool g_lcd_need_redraw;
 
 void screen_update_values(float ph, float temp);
 
+/**
+ * @brief  Copy du lieu framebuffer hien tai phuc vu mo phong tren Web Server.
+ * @param  dest Con tro den mang 1024 bytes
+ */
+void LCD_GetFramebuffer(uint8_t *dest);
 
 #endif /* MODULE_MAN_HINH_CAM_BIEN_H */

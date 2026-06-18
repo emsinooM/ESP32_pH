@@ -32,6 +32,7 @@
 
 #include "user_system.h"
 #include "user_azure.h"
+#include "user_storage.h"
 #include "user_system.h"
 #include "user_ouput.h"
 #include "user_ota.h"
@@ -44,6 +45,8 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "ph_temp.h" 
+#include "filter.h"
+#include "do_sensor.h"
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
@@ -323,6 +326,7 @@ static void prvHandleCommand(AzureIoTHubClientCommandRequest_t *pxMessage,
             cJSON_AddNumberToObject(sensor, "temp", status.temperature);
             cJSON_AddNumberToObject(sensor, "v_probe_mv", status.v_probe_mv);
             cJSON_AddBoolToObject(sensor, "is_calibrated", status.is_calibrated);
+            cJSON_AddNumberToObject(sensor, "filter_lvl", g_filter_level);
             cJSON_AddNumberToObject(sensor, "ph7_voltage_mv", status.ph7_voltage_mv);
             cJSON_AddNumberToObject(sensor, "ph7_temp_c", status.ph7_temp_c);
             cJSON_AddNumberToObject(sensor, "ph4_voltage_mv", status.ph4_voltage_mv);
@@ -653,6 +657,12 @@ void User_Azure_Cleanup_For_OTA(void)
         ESP_LOGI("AZURE", "  Deleted Telemetry queue");
     }
 
+    /* 5. Delete DO sensor task to reclaim stack & UART memory */
+    if (do_sensor_is_running()) {
+        ESP_LOGI("AZURE", "  Stopping DO sensor task for OTA...");
+        do_sensor_stop();
+    }
+
     /* Give FreeRTOS time to reclaim the memory */
     vTaskDelay(pdMS_TO_TICKS(200));
 
@@ -813,21 +823,28 @@ static void Azure_Telemetry_Task(void *pvParameters)
                 "{\"payload\":{"
                     "\"HostName\":\"%s\","
                     "\"DeviceId\":\"%s\","
-                    "\"Code\":%d,"
+                    "\"Code\":504,"
                     "\"TimeStamp\":%lld,"
-                    "\"ph\":%.2f,"
-                    "\"temp\":%.2f,"
-                    "\"v_probe_mv\":%.2f,"
-                    "\"is_calibrated\":%s"
+                    "\"SensorData\":{"
+                        "\"ph\":%.2f,"
+                        "\"temp\":%.2f,"
+                        "\"Valid\":%s,"
+                        "\"do\":%.2f,"
+                        "\"do_temp\":%.2f,"
+                        "\"do_sat\":%.2f,"
+                        "\"do_valid\":%s"
+                    "}"
                 "}}",
                 IoTHubHandle.hostName,
                 IoTHubHandle.deviceId,
-                CMD_CODE_GET_PH,
                 (long long)Sys_Info.epochtime,
                 (double)status.ph,
                 (double)status.temperature,
-                (double)status.v_probe_mv,
-                status.is_calibrated ? "true" : "false"
+                status.is_calibrated ? "true" : "false",
+                (double)status.do_mg_l,
+                (double)status.do_temp_c,
+                (double)status.do_saturation_pct,
+                status.do_valid ? "true" : "false"
             );
 
             if (len > 0 && len < sizeof(tele_str))
@@ -1185,6 +1202,7 @@ void Azure_Handle_Direct_Method_Data(cJSON *payload, DirectMethodResponse_t *res
                         cJSON_AddNumberToObject(tele_payload, "temp", status.temperature);
                         cJSON_AddNumberToObject(tele_payload, "v_probe_mv", status.v_probe_mv);
                         cJSON_AddBoolToObject(tele_payload, "is_calibrated", status.is_calibrated);
+                        cJSON_AddNumberToObject(tele_payload, "filter_lvl", g_filter_level);
 
                         char *tele_str = cJSON_PrintUnformatted(tele);
                         if (tele_str != NULL)
@@ -1251,6 +1269,7 @@ void Azure_Handle_Direct_Method_Data(cJSON *payload, DirectMethodResponse_t *res
                     cJSON_AddNumberToObject(tele_payload, "temp", status.temperature);
                     cJSON_AddNumberToObject(tele_payload, "v_probe_mv", status.v_probe_mv);
                     cJSON_AddBoolToObject(tele_payload, "is_calibrated", status.is_calibrated);
+                    cJSON_AddNumberToObject(tele_payload, "filter_lvl", g_filter_level);
 
                     char *tele_str = cJSON_PrintUnformatted(tele);
                     if (tele_str != NULL)
@@ -1275,7 +1294,7 @@ void Azure_Handle_Direct_Method_Data(cJSON *payload, DirectMethodResponse_t *res
                 bool success = false;
                 if (strcasecmp(action->valuestring, "CAL_7") == 0)
                 {
-                    success = Calibrate_PH_7(status.v_probe_mv, status.temperature);
+                    success = Calibrate_PH_Point(7.00f, status.v_probe_mv, status.temperature, 2);
                     if (success)
                     {
                         response->status = COMMAND_STATUS_OK;
@@ -1291,7 +1310,7 @@ void Azure_Handle_Direct_Method_Data(cJSON *payload, DirectMethodResponse_t *res
                 }
                 else if (strcasecmp(action->valuestring, "CAL_4") == 0)
                 {
-                    success = Calibrate_PH_4(status.v_probe_mv, status.temperature);
+                    success = Calibrate_PH_Point(4.00f, status.v_probe_mv, status.temperature, 2);
                     if (success)
                     {
                         response->status = COMMAND_STATUS_OK;
@@ -1393,6 +1412,37 @@ void Azure_Handle_Direct_Method_Data(cJSON *payload, DirectMethodResponse_t *res
                                     sizeof(response->payload),
                                     "Create wifi task failed");
                             }
+                        }
+                    }
+                }
+                /* ========== Target: filter ========== */
+                else if (strcasecmp(target->valuestring, "filter") == 0)
+                {
+                    cJSON *level_item = cJSON_GetObjectItem(data, "Level");
+                    if (level_item == NULL || !cJSON_IsNumber(level_item))
+                    {
+                        response->status = COMMAND_STATUS_BAD_REQUEST;
+                        response->payloadLength = snprintf(response->payload,
+                            sizeof(response->payload), "Missing or invalid Level");
+                    }
+                    else
+                    {
+                        uint32_t lvl = (uint32_t)level_item->valueint;
+                        if (lvl >= FILTER_LEVEL_COUNT)
+                        {
+                            response->status = COMMAND_STATUS_BAD_REQUEST;
+                            response->payloadLength = snprintf(response->payload,
+                                sizeof(response->payload), "Invalid Level (expected 0, 1 or 2)");
+                        }
+                        else
+                        {
+                            g_filter_level = (filter_level_t)lvl;
+                            Nvs_Write_Number("filter_lvl", (uint32_t)g_filter_level);
+                            update_system_filters_level(g_filter_level);
+                            
+                            response->status = COMMAND_STATUS_OK;
+                            response->payloadLength = snprintf(response->payload,
+                                sizeof(response->payload), "Set filter level to %d OK", (int)lvl);
                         }
                     }
                 }

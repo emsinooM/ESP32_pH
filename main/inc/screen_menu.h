@@ -37,6 +37,41 @@
 #include <stdbool.h>
 
 /* =====================================================================
+ * Ngôn ngữ hệ thống
+ * ===================================================================== */
+typedef enum {
+    LANG_EN = 0,
+    LANG_VI,
+    LANG_COUNT
+} sys_lang_t;
+
+extern sys_lang_t g_sys_lang;
+
+/* =====================================================================
+ * Định dạng ngày hệ thống
+ * ===================================================================== */
+typedef enum {
+    DATE_FORMAT_YYYY_MM_DD = 0,
+    DATE_FORMAT_DD_MM_YYYY,
+    DATE_FORMAT_MM_DD_YYYY,
+    DATE_FORMAT_COUNT
+} date_format_t;
+
+extern date_format_t g_date_format;
+
+/* =====================================================================
+ * Che do hien thi man hinh chinh
+ * ===================================================================== */
+typedef enum {
+    DISP_MODE_PH = 0,
+    DISP_MODE_DO,
+    DISP_MODE_DUAL,
+    DISP_MODE_COUNT
+} display_mode_t;
+
+extern display_mode_t g_display_mode;
+
+/* =====================================================================
  * Chân GPIO nút bấm
  * ===================================================================== */
 #define BTN_PIN_ESC     13    /**< ESC   – quay lại */
@@ -57,23 +92,40 @@ typedef enum {
     /* Level 2 */
     PAGE_SYSTEM_SETTINGS,
     PAGE_SENSOR_SETTINGS,
-    PAGE_OUTPUT_SETTINGS,
+    PAGE_MODBUS_SETTINGS,
 
     /* Level 3 – System Settings */
     PAGE_LANGUAGE,
     PAGE_DATE,
+    PAGE_DATE_FORMAT,
+    PAGE_TIME_SETTINGS,
+    PAGE_DISPLAY_MODE,
+    PAGE_SCREEN_SETTINGS,
+    PAGE_SCREEN_CONTRAST,
+    PAGE_SCREEN_RES_RATIO,
 
     /* Level 3 – Sensor Settings */
     PAGE_CALIBRATION,
+    PAGE_CAL_2PT,
+    PAGE_CAL_3PT,
+    PAGE_CAL_3PT_G1,
+    PAGE_CAL_3PT_G2,
+    PAGE_CAL_EXEC,
+    PAGE_CAL_DO,
+    PAGE_CAL_DO_EXEC,
+    PAGE_CAL_DO_TEMP,
     PAGE_DIGITAL_FILTER,
     PAGE_TEMP_MODE,
+    PAGE_TEMP_SETTINGS,
+    PAGE_TEMP_LIN_COMP,
 
-    /* Level 3 – Output Settings */
-    PAGE_RELAY1,
-    PAGE_RELAY2,
-    PAGE_RELAY3,
-    PAGE_CURRENT1,
-    PAGE_MODBUS,
+    /* Level 3 – Modbus Settings */
+    PAGE_MODBUS_PORT1,
+    PAGE_MODBUS_PORT2,
+    PAGE_MODBUS_EDIT_ADDR,
+    PAGE_MODBUS_SELECT_BAUD,
+    PAGE_MODBUS_SELECT_PARITY,
+    PAGE_MODBUS_SELECT_STOP,
 
     PAGE_LEAF,              /**< Mục lá – không có trang con   */
     PAGE_COUNT
@@ -106,5 +158,12 @@ void menu_handle_buttons(void);
 
 /** @brief Vẽ màn hình menu hiện tại lên LCD và Flush */
 void menu_render(void);
+
+/**
+ * @brief  Gia lap nhan nut tu xa (phuc vu mo phong tren Web Server)
+ * @param  btn_name Ten nut bam ("esc", "down", "up", "right", "enter")
+ * @return true neu ten nut hop le, false neu nguoc lai
+ */
+bool menu_simulate_press(const char *btn_name);
 
 #endif /* MENU_H */
