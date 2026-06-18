@@ -628,8 +628,8 @@ static const page_def_t s_pages_vi[PAGE_COUNT] = {
 /* =====================================================================
  * Điều hướng nội bộ
  * ===================================================================== */
-#define VISIBLE_ITEMS   5    /**< Số hàng mục hiển thị cùng lúc */
-#define ITEM_ROW_H      8    /**< Chiều cao mỗi hàng (px)        */
+#define VISIBLE_ITEMS   4    /**< Số hàng mục hiển thị cùng lúc */
+#define ITEM_ROW_H      10   /**< Chiều cao mỗi hàng (px)        */
 #define TITLE_BAR_H     10   /**< Chiều cao title bar (px)       */
 #define STATUS_BAR_H    12   /**< Chiều cao status bar (px)      */
 #define ITEMS_Y_START   11   /**< y đầu tiên của danh sách       */
@@ -2528,7 +2528,7 @@ void menu_render(void)
 
         if (idx == g_menu.selected) {
             /* Mục được chọn: nền đen, chữ trắng */
-            LCD_FillRect(0, y, 128, ITEM_ROW_H, LCD_COLOR_ON);
+            LCD_FillRect(0, y, 128, ITEM_ROW_H - 1, LCD_COLOR_ON);
             
             // Calculate scroll_x for the selected item
             int16_t scroll_x = 0;
