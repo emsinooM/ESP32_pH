@@ -539,6 +539,44 @@ void LCD_DrawInt(uint8_t x, uint8_t y, int32_t val, uint8_t color) {
   LCD_DrawString(x, y, buf, color);
 }
 
+void LCD_DrawCharClipped(int16_t x, int16_t y, char c, uint8_t min_x, uint8_t max_x, uint8_t color) {
+  if (c < 0x20 || c > 0x7E)
+    c = '?';
+  const uint8_t *col_data = font5x7[c - 0x20];
+  for (uint8_t col = 0; col < 5; col++) {
+    int16_t px_x = x + col;
+    if (px_x >= min_x && px_x < max_x) {
+      uint8_t line = col_data[col];
+      for (uint8_t row = 0; row < 7; row++) {
+        if (y + row < 64) {
+          if (line & (1 << row))
+            LCD_DrawPixel(px_x, y + row, color);
+          else
+            LCD_DrawPixel(px_x, y + row, color ^ 1);
+        }
+      }
+    }
+  }
+  int16_t px_x = x + 5;
+  if (px_x >= min_x && px_x < max_x) {
+    for (uint8_t row = 0; row < 7; row++) {
+      if (y + row < 64) {
+        LCD_DrawPixel(px_x, y + row, color ^ 1);
+      }
+    }
+  }
+}
+
+void LCD_DrawStringScroll(uint8_t x, uint8_t y, const char *str, uint8_t max_x, int16_t scroll_x, uint8_t color) {
+  uint16_t len = strlen(str);
+  for (uint16_t i = 0; i < len; i++) {
+    int16_t char_x = x + i * 6 - scroll_x;
+    if (char_x + 6 > x && char_x < max_x) {
+      LCD_DrawCharClipped(char_x, y, str[i], x, max_x, color);
+    }
+  }
+}
+
 /* =====================================================================
  * Bitmap 1-bit (MSB trái, row-major)
  * ===================================================================== */

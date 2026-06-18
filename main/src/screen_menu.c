@@ -85,6 +85,7 @@ static uint8_t s_modbus_addr_edit = 1;
 static uint8_t s_contrast_edit = 5;
 static uint8_t s_res_ratio_edit = 0;
 static const uint32_t s_baud_rates[] = { 2400, 4800, 9600, 19200, 38400, 57600, 115200 };
+static uint32_t s_menu_scroll_ticks = 0;
 
 static uint8_t get_days_in_month(uint16_t year, uint8_t month)
 {
@@ -639,6 +640,7 @@ static void goto_page(menu_page_t page)
     g_menu.current_page  = page;
     g_menu.selected      = 0;
     g_menu.scroll_offset = 0;
+    s_menu_scroll_ticks  = 0;
     // bool s_waiting_for_enter_release = true; // Chờ người dùng nhả nút ENTER từ thao tác chuyển trang
     ESP_LOGI(TAG_MENU, "Navigate -> page %d", (int)page);
 
@@ -2100,6 +2102,7 @@ void menu_handle_buttons(void)
     if (btn_edge(BTN_IDX_UP)) {
         if (g_menu.selected > 0) {
             g_menu.selected--;
+            s_menu_scroll_ticks = 0;
             if (g_menu.selected < g_menu.scroll_offset) {
                 g_menu.scroll_offset = g_menu.selected;
             }
@@ -2114,6 +2117,7 @@ void menu_handle_buttons(void)
     if (btn_edge(BTN_IDX_DOWN)) {
         if (g_menu.selected < page->item_count - 1) {
             g_menu.selected++;
+            s_menu_scroll_ticks = 0;
             if (g_menu.selected >= g_menu.scroll_offset + VISIBLE_ITEMS) {
                 g_menu.scroll_offset = g_menu.selected - VISIBLE_ITEMS + 1;
             }
@@ -2419,6 +2423,7 @@ static void draw_arrow_right_large(uint8_t x, uint8_t y, uint8_t color)
 
 void menu_render(void)
 {
+    s_menu_scroll_ticks++;
     if (g_menu.current_page == PAGE_TIME_SETTINGS) {
         menu_render_time_settings();
         return;
@@ -2524,14 +2529,35 @@ void menu_render(void)
         if (idx == g_menu.selected) {
             /* Mục được chọn: nền đen, chữ trắng */
             LCD_FillRect(0, y, 128, ITEM_ROW_H, LCD_COLOR_ON);
-            LCD_DrawString(4, y + 1, item_str, LCD_COLOR_OFF);
+            
+            // Calculate scroll_x for the selected item
+            int16_t scroll_x = 0;
+            uint16_t text_w = strlen(item_str) * 6;
+            uint16_t view_w = 120 - 4; // Max width is 116px (19 characters)
+            if (text_w > view_w) {
+                int16_t max_scroll = text_w - view_w;
+                uint32_t total_cycle = 30 + max_scroll + 30; // 30 ticks delay (1.5s), max_scroll scroll ticks, 30 ticks delay at end
+                uint32_t phase = s_menu_scroll_ticks % total_cycle;
+                if (phase < 30) {
+                    scroll_x = 0;
+                } else if (phase < 30 + max_scroll) {
+                    scroll_x = phase - 30;
+                } else {
+                    scroll_x = max_scroll;
+                }
+                
+                // Force continuous redraw while scrolling
+                g_lcd_need_redraw = true;
+            }
+            
+            LCD_DrawStringScroll(4, y + 1, item_str, 120, scroll_x, LCD_COLOR_OFF);
             /* Mũi tên ► ở bên phải để chỉ mục đang chọn */
             if (page->children[idx] != PAGE_LEAF) {
                 draw_arrow_right(121, y + 2, LCD_COLOR_OFF);
             }
         } else {
-            /* Mục bình thường: nền trắng, chữ đen */
-            LCD_DrawString(4, y + 1, item_str, LCD_COLOR_ON);
+            /* Mục bình thường: nền trắng, chữ đen, clipped at 120px to avoid arrow overlap */
+            LCD_DrawStringScroll(4, y + 1, item_str, 120, 0, LCD_COLOR_ON);
         }
     }
 
